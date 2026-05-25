@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from io import BytesIO
+from pathlib import Path
+
+import pandas as pd
 import streamlit as st
 
-from src.substitution import connected_substitutions_view, lookup_substitutions
+from src.substitution import connected_substitutions_view, lookup_substitutions, match_uploaded_external_products
 from src.visualization import (
     gap_metrics,
     mob_sales_by_category_chart,
@@ -13,6 +17,20 @@ from src.visualization import (
     top_mob_products_chart,
     top_products_without_substitute_families_chart,
 )
+
+
+def read_external_upload(uploaded_file) -> pd.DataFrame:
+    suffix = Path(uploaded_file.name).suffix.lower()
+    file_bytes = uploaded_file.getvalue()
+    if suffix == ".csv":
+        try:
+            return pd.read_csv(BytesIO(file_bytes), sep=None, engine="python")
+        except Exception:
+            return pd.read_csv(BytesIO(file_bytes), sep=";")
+    if suffix in {".xlsx", ".xls", ".xlsm"}:
+        return pd.read_excel(BytesIO(file_bytes))
+    raise ValueError(f"Unsupported file type: {suffix}")
+
 
 st.set_page_config(page_title="Dashboard", page_icon="ST", layout="wide")
 
@@ -83,6 +101,22 @@ with st.container(border=True):
         ]
         available_columns = [column for column in result_columns if column in filtered_lookup.columns]
         st.dataframe(filtered_lookup[available_columns], use_container_width=True, height=220)
+
+with st.expander("Bulk External Product Match", expanded=False):
+    st.caption("Upload an external product file and see the matched substitutes below.")
+    uploaded_external_file = st.file_uploader(
+        "Upload CSV or Excel",
+        type=["csv", "xlsx", "xls", "xlsm"],
+        key="bulk_external_match",
+    )
+    if uploaded_external_file is not None:
+        try:
+            uploaded_external_df = read_external_upload(uploaded_external_file)
+            matched_upload_df = match_uploaded_external_products(uploaded_external_df)
+            st.success(f"Processed {len(uploaded_external_df)} uploaded row(s).")
+            st.dataframe(matched_upload_df, use_container_width=True, height=320)
+        except Exception as exc:
+            st.error(f"Could not read the uploaded file: {exc}")
 
 st.subheader("Overview")
 sub_metrics = substitution_metrics()
