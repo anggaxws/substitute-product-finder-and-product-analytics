@@ -154,18 +154,34 @@ def top_mob_products_chart(limit: int = 12):
     if mob_df.empty:
         return None
     summary = mob_df.copy()
-    summary["full_product_label"] = (
-        summary["MOB_Name"].fillna("")
-        + " | "
-        + summary["Größe/Variante"].fillna("").replace("", "No size / variant")
-        + " | "
-        + summary["MOB_ID"].astype(str)
+    summary["normalized_name"] = summary["MOB_Name"].fillna("").map(normalize_text)
+    summary["normalized_variant"] = summary["Größe/Variante"].fillna("").map(normalize_text)
+    summary["display_variant"] = summary["Größe/Variante"].fillna("").replace("", "No size / variant")
+    summary = (
+        summary.groupby(
+            ["Kategorie", "normalized_name", "normalized_variant", "MOB_Name", "display_variant"],
+            dropna=False,
+        )
+        .agg(
+            Req_Qty_Total=("Req_Qty_Total", "sum"),
+            mob_id_count=("MOB_ID", "nunique"),
+            sample_mob_id=("MOB_ID", "first"),
+        )
+        .reset_index()
     )
     summary["product_label"] = (
         summary["MOB_Name"].fillna("").str.slice(0, 34)
         + summary["MOB_Name"].fillna("").map(lambda value: "..." if len(str(value)) > 34 else "")
         + " | "
-        + summary["MOB_ID"].astype(str)
+        + summary["sample_mob_id"].astype(str)
+    )
+    summary["full_product_label"] = (
+        summary["MOB_Name"].fillna("")
+        + " | "
+        + summary["display_variant"]
+        + " | IDs: "
+        + summary["sample_mob_id"].astype(str)
+        + summary["mob_id_count"].map(lambda count: f" (+{count - 1} more IDs)" if count > 1 else "")
     )
     summary = summary.sort_values("Req_Qty_Total", ascending=False).head(limit)
     fig = px.bar(
@@ -175,8 +191,9 @@ def top_mob_products_chart(limit: int = 12):
         orientation="h",
         hover_data={
             "MOB_Name": True,
-            "Größe/Variante": True,
-            "MOB_ID": True,
+            "display_variant": True,
+            "sample_mob_id": True,
+            "mob_id_count": True,
             "Req_Qty_Total": ":,.0f",
             "product_label": False,
             "full_product_label": False,
