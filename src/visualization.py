@@ -149,6 +149,47 @@ def top_mob_families_chart(limit: int = 12):
     return px.bar(summary.sort_values("Req_Qty_Total", ascending=True), x="Req_Qty_Total", y="product_family", orientation="h", title=f"Top {limit} MOB Product Families")
 
 
+def top_mob_products_chart(limit: int = 12):
+    mob_df = _mob_portfolio_with_sales()
+    if mob_df.empty:
+        return None
+    summary = mob_df.copy()
+    summary["full_product_label"] = (
+        summary["MOB_Name"].fillna("")
+        + " | "
+        + summary["Größe/Variante"].fillna("").replace("", "No size / variant")
+        + " | "
+        + summary["MOB_ID"].astype(str)
+    )
+    summary["product_label"] = (
+        summary["MOB_Name"].fillna("").str.slice(0, 34)
+        + summary["MOB_Name"].fillna("").map(lambda value: "..." if len(str(value)) > 34 else "")
+        + " | "
+        + summary["MOB_ID"].astype(str)
+    )
+    summary = summary.sort_values("Req_Qty_Total", ascending=False).head(limit)
+    fig = px.bar(
+        summary.sort_values("Req_Qty_Total", ascending=True),
+        x="Req_Qty_Total",
+        y="product_label",
+        orientation="h",
+        hover_data={
+            "MOB_Name": True,
+            "Größe/Variante": True,
+            "MOB_ID": True,
+            "Req_Qty_Total": ":,.0f",
+            "product_label": False,
+            "full_product_label": False,
+        },
+        title=f"Top {limit} MOB Products",
+    )
+    fig.update_layout(
+        yaxis={"automargin": True},
+        margin={"l": 40, "r": 20, "t": 60, "b": 40},
+    )
+    return fig
+
+
 def products_without_substitute_by_category_chart():
     gap_df = _products_without_substitute_with_qty()
     if gap_df.empty:

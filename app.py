@@ -10,6 +10,7 @@ from src.visualization import (
     products_without_substitute_by_category_chart,
     substitution_metrics,
     top_mob_families_chart,
+    top_mob_products_chart,
     top_products_without_substitute_families_chart,
 )
 
@@ -108,9 +109,17 @@ sales_by_category_fig = mob_sales_by_category_chart()
 if sales_by_category_fig is not None:
     chart_col1.plotly_chart(sales_by_category_fig, use_container_width=True)
 
-top_families_fig = top_mob_families_chart()
-if top_families_fig is not None:
-    chart_col2.plotly_chart(top_families_fig, use_container_width=True)
+mob_view_mode = chart_col2.radio(
+    "MOB Product View",
+    ["Product Families", "Individual Products"],
+    horizontal=True,
+)
+if mob_view_mode == "Product Families":
+    top_mob_fig = top_mob_families_chart()
+else:
+    top_mob_fig = top_mob_products_chart()
+if top_mob_fig is not None:
+    chart_col2.plotly_chart(top_mob_fig, use_container_width=True)
 
 chart_col3, chart_col4 = st.columns(2)
 gap_by_category_fig = products_without_substitute_by_category_chart()
