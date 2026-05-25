@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
+import re
+import unicodedata
 from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from src.config import DATASETS
+from src.data_loader import load_dataset, save_dataset
 from src.substitution import connected_substitutions_view, lookup_substitutions, match_uploaded_external_products
 from src.visualization import (
     gap_metrics,
@@ -19,6 +24,9 @@ from src.visualization import (
 )
 
 
+ADMIN_PASSWORD = os.getenv("SUBSTITUTION_TOOL_ADMIN_PASSWORD", "admin")
+
+
 def read_external_upload(uploaded_file) -> pd.DataFrame:
     suffix = Path(uploaded_file.name).suffix.lower()
     file_bytes = uploaded_file.getvalue()
@@ -30,6 +38,65 @@ def read_external_upload(uploaded_file) -> pd.DataFrame:
     if suffix in {".xlsx", ".xls", ".xlsm"}:
         return pd.read_excel(BytesIO(file_bytes))
     raise ValueError(f"Unsupported file type: {suffix}")
+
+
+def normalize_header(value: object) -> str:
+    text = "" if value is None else str(value)
+    normalized = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized.strip().lower())
+    return normalized.strip("_")
+
+
+def normalize_editor_output(dataset_name: str, edited_df: pd.DataFrame) -> pd.DataFrame:
+    output = edited_df.copy()
+    spec = DATASETS[dataset_name]
+    for column in spec["columns"]:
+        if column not in output.columns:
+            output[column] = ""
+    output = output[spec["columns"]].fillna("")
+    return output.astype(str)
+
+
+def normalize_uploaded_dataset(dataset_name: str, uploaded_df: pd.DataFrame) -> pd.DataFrame:
+    spec = DATASETS[dataset_name]
+    uploaded = uploaded_df.copy()
+    normalized_column_map = {normalize_header(column): column for column in uploaded.columns}
+    matched_columns: dict[str, str] = {}
+
+    for target_column in spec["columns"]:
+        normalized_target = normalize_header(target_column)
+        if normalized_target in normalized_column_map:
+            matched_columns[target_column] = normalized_column_map[normalized_target]
+
+    output = pd.DataFrame(index=uploaded.index)
+    for target_column in spec["columns"]:
+        source_column = matched_columns.get(target_column)
+        if source_column is not None:
+            output[target_column] = uploaded[source_column]
+        else:
+            output[target_column] = ""
+
+    return output.fillna("").astype(str)
+
+
+def validate_unique_keys(dataset_name: str, df: pd.DataFrame) -> tuple[bool, pd.DataFrame]:
+    unique_keys = DATASETS[dataset_name].get("unique_keys", [])
+    if not unique_keys:
+        return True, pd.DataFrame()
+
+    working = df.copy()
+    for column in unique_keys:
+        working[column] = working[column].fillna("").astype(str).str.strip()
+
+    # Ignore fully blank key rows that can appear at the bottom of the editor.
+    non_blank_mask = working[unique_keys].apply(lambda row: any(value for value in row), axis=1)
+    working = working[non_blank_mask].copy()
+    if working.empty:
+        return True, pd.DataFrame()
+
+    duplicate_mask = working.duplicated(subset=unique_keys, keep=False)
+    duplicate_rows = working[duplicate_mask].copy()
+    return duplicate_rows.empty, duplicate_rows
 
 
 st.set_page_config(page_title="Dashboard", page_icon="ST", layout="wide")
@@ -176,3 +243,96 @@ connected_columns = [
 ]
 available_connected_columns = [column for column in connected_columns if column in connected_subs_df.columns]
 st.dataframe(connected_subs_df[available_connected_columns], use_container_width=True, height=320)
+
+if "admin_unlocked" not in st.session_state:
+    st.session_state.admin_unlocked = False
+
+with st.expander("Admin Panel", expanded=False):
+    st.caption("Admin can edit the live CSV databases directly. Default password comes from `SUBSTITUTION_TOOL_ADMIN_PASSWORD`, or falls back to `admin`.")
+
+    if not st.session_state.admin_unlocked:
+        admin_password_input = st.text_input("Admin Password", type="password", key="admin_password_input")
+        if st.button("Unlock Admin Panel"):
+            if admin_password_input == ADMIN_PASSWORD:
+                st.session_state.admin_unlocked = True
+                st.success("Admin panel unlocked.")
+            else:
+                st.error("Incorrect admin password.")
+
+    if st.session_state.admin_unlocked:
+        dataset_tabs = st.tabs(
+            [
+                "Raw External Products",
+                "MOB Portfolio",
+                "Products Without Substitute",
+                "Substitute Database",
+            ]
+        )
+        dataset_names = [
+            "raw_external_products",
+            "mob_portfolio",
+            "products_without_substitute",
+            "substitute_database",
+        ]
+
+        for tab, dataset_name in zip(dataset_tabs, dataset_names):
+            with tab:
+                current_df = load_dataset(dataset_name).fillna("")
+                st.caption(f"Editing `{dataset_name}`")
+                edited_df = st.data_editor(
+                    current_df,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    key=f"editor_{dataset_name}",
+                    height=360,
+                )
+                if st.button(f"Save {dataset_name}", key=f"save_{dataset_name}"):
+                    normalized_df = normalize_editor_output(dataset_name, edited_df)
+                    is_valid, duplicate_rows = validate_unique_keys(dataset_name, normalized_df)
+                    if not is_valid:
+                        unique_keys = DATASETS[dataset_name].get("unique_keys", [])
+                        st.error(
+                            f"Duplicate key detected in {dataset_name}. "
+                            f"The columns {', '.join(unique_keys)} must be unique."
+                        )
+                        st.dataframe(duplicate_rows, use_container_width=True, height=220)
+                    else:
+                        save_dataset(dataset_name, normalized_df)
+                        st.success(f"Saved changes to {dataset_name}.")
+
+                st.markdown("**Bulk Upload**")
+                bulk_file = st.file_uploader(
+                    f"Upload CSV or Excel for {dataset_name}",
+                    type=["csv", "xlsx", "xls", "xlsm"],
+                    key=f"bulk_upload_{dataset_name}",
+                )
+                upload_mode = st.radio(
+                    f"Upload mode for {dataset_name}",
+                    ["Append", "Replace"],
+                    horizontal=True,
+                    key=f"bulk_mode_{dataset_name}",
+                )
+                if bulk_file is not None and st.button(f"Import into {dataset_name}", key=f"import_{dataset_name}"):
+                    try:
+                        uploaded_df = read_external_upload(bulk_file)
+                        normalized_upload_df = normalize_uploaded_dataset(dataset_name, uploaded_df)
+                        combined_df = (
+                            pd.concat([current_df, normalized_upload_df], ignore_index=True)
+                            if upload_mode == "Append"
+                            else normalized_upload_df
+                        )
+                        is_valid, duplicate_rows = validate_unique_keys(dataset_name, combined_df)
+                        if not is_valid:
+                            unique_keys = DATASETS[dataset_name].get("unique_keys", [])
+                            st.error(
+                                f"Duplicate key detected while importing into {dataset_name}. "
+                                f"The columns {', '.join(unique_keys)} must be unique."
+                            )
+                            st.dataframe(duplicate_rows, use_container_width=True, height=220)
+                        else:
+                            save_dataset(dataset_name, combined_df)
+                            st.success(
+                                f"Imported {len(normalized_upload_df)} row(s) into {dataset_name} using {upload_mode.lower()} mode."
+                            )
+                    except Exception as exc:
+                        st.error(f"Could not import into {dataset_name}: {exc}")

@@ -22,6 +22,7 @@ DATASETS = {
             "import_date",
         ],
         "required_import_columns": ["external_id", "external_name"],
+        "unique_keys": ["external_id"],
     },
     "mob_portfolio": {
         "path": DATA_DIR / "mob_portfolio.csv",
@@ -35,6 +36,7 @@ DATASETS = {
             "Req_Qty_Total",
         ],
         "required_import_columns": ["MOB_ID", "MOB_Name"],
+        "unique_keys": ["MOB_ID"],
     },
     "products_without_substitute": {
         "path": DATA_DIR / "products_without_substitute.csv",
@@ -51,6 +53,7 @@ DATASETS = {
             "import_date",
         ],
         "required_import_columns": ["external_id", "external_name"],
+        "unique_keys": ["external_id"],
     },
     "substitute_database": {
         "path": DATA_DIR / "substitute_database.csv",
@@ -61,8 +64,10 @@ DATASETS = {
             "import_date",
         ],
         "required_import_columns": ["external_id", "mob_id"],
+        "unique_keys": ["external_id", "mob_id"],
     },
 }
+
 
 def empty_frame(dataset_name: str) -> pd.DataFrame:
     return pd.DataFrame(columns=DATASETS[dataset_name]["columns"])
