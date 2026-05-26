@@ -80,6 +80,7 @@ def lookup_substitutions(query: str) -> pd.DataFrame:
 
 def connected_substitutions_view() -> pd.DataFrame:
     lookup_df = lookup_substitutions("")
+    lookup_df = lookup_df[lookup_df["mob_id"].fillna("").astype(str).str.strip() != ""].copy()
     output_columns = [
         "external_id",
         "external_name",

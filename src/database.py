@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import sqlite3
+from contextlib import closing
+from datetime import datetime, UTC
 from pathlib import Path
 
 import pandas as pd
@@ -34,6 +37,15 @@ def _normalize_dataset(dataset_name: str, df: pd.DataFrame) -> pd.DataFrame:
 
 def _create_schema(conn: sqlite3.Connection) -> None:
     conn.execute('CREATE TABLE IF NOT EXISTS app_metadata ("key" TEXT PRIMARY KEY, "value" TEXT NOT NULL)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS audit_log ('
+        '"id" INTEGER PRIMARY KEY AUTOINCREMENT, '
+        '"timestamp_utc" TEXT NOT NULL, '
+        '"action" TEXT NOT NULL, '
+        '"dataset_name" TEXT NOT NULL, '
+        '"details_json" TEXT NOT NULL'
+        ')'
+    )
 
     for spec in DATASETS.values():
         column_defs = ", ".join(f'{_quote_identifier(column)} TEXT' for column in spec["columns"])
@@ -73,23 +85,50 @@ def _write_dataset(conn: sqlite3.Connection, dataset_name: str, df: pd.DataFrame
             normalized.to_sql(spec["table"], conn, if_exists="append", index=False)
 
 
+def log_audit_action(action: str, dataset_name: str, details: dict[str, object]) -> None:
+    ensure_database()
+    with closing(_connect()) as conn:
+        with conn:
+            conn.execute(
+                'INSERT INTO audit_log ("timestamp_utc", "action", "dataset_name", "details_json") VALUES (?, ?, ?, ?)',
+                (
+                    datetime.now(UTC).isoformat(),
+                    action,
+                    dataset_name,
+                    json.dumps(details, ensure_ascii=True, default=str),
+                ),
+            )
+
+
+def fetch_audit_log(limit: int = 25) -> pd.DataFrame:
+    ensure_database()
+    with closing(_connect()) as conn:
+        df = pd.read_sql_query(
+            'SELECT "timestamp_utc", "action", "dataset_name", "details_json" '
+            'FROM audit_log ORDER BY "id" DESC LIMIT ?',
+            conn,
+            params=(limit,),
+        )
+    return df.fillna("")
+
+
 def ensure_database() -> None:
     ensure_data_files()
-    with _connect() as conn:
+    with closing(_connect()) as conn:
         _create_schema(conn)
 
 
 def load_dataset_from_db(dataset_name: str) -> pd.DataFrame:
     ensure_database()
     spec = DATASETS[dataset_name]
-    with _connect() as conn:
+    with closing(_connect()) as conn:
         df = pd.read_sql_query(f'SELECT * FROM {_quote_identifier(spec["table"])}', conn)
     return _normalize_dataset(dataset_name, df)
 
 
 def save_dataset_to_db(dataset_name: str, df: pd.DataFrame) -> None:
     ensure_database()
-    with _connect() as conn:
+    with closing(_connect()) as conn:
         _write_dataset(conn, dataset_name, df)
 
 
@@ -166,9 +205,18 @@ def increment_requested_amounts(updates: list[dict[str, object]]) -> dict[str, o
         )
 
     if applied_updates:
-        with _connect() as conn:
+        with closing(_connect()) as conn:
             _write_dataset(conn, "raw_external_products", external_df)
             _write_dataset(conn, "mob_portfolio", mob_df)
+        log_audit_action(
+            "requested_amount_update",
+            "raw_external_products",
+            {
+                "applied_count": len(applied_updates),
+                "missing_external_ids": missing_external_ids,
+                "updates": applied_updates,
+            },
+        )
 
     return {
         "applied_updates": applied_updates,
@@ -178,7 +226,7 @@ def increment_requested_amounts(updates: list[dict[str, object]]) -> dict[str, o
 
 def database_status() -> dict[str, int | str]:
     ensure_database()
-    with _connect() as conn:
+    with closing(_connect()) as conn:
         metadata_row = conn.execute('SELECT "value" FROM app_metadata WHERE "key" = "schema_version"').fetchone()
         return {
             "path": str(Path(DB_PATH)),

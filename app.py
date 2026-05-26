@@ -11,7 +11,7 @@ import streamlit as st
 
 from src.config import DATASETS
 from src.data_loader import load_dataset, save_dataset
-from src.database import increment_requested_amounts
+from src.database import fetch_audit_log, increment_requested_amounts, log_audit_action
 from src.substitution import connected_substitutions_view, lookup_substitutions, match_uploaded_external_products
 from src.visualization import (
     gap_category_options,
@@ -100,6 +100,32 @@ def validate_unique_keys(dataset_name: str, df: pd.DataFrame) -> tuple[bool, pd.
     duplicate_mask = working.duplicated(subset=unique_keys, keep=False)
     duplicate_rows = working[duplicate_mask].copy()
     return duplicate_rows.empty, duplicate_rows
+
+
+def validate_dataset_rules(dataset_name: str, df: pd.DataFrame) -> list[str]:
+    errors: list[str] = []
+
+    if dataset_name == "substitute_database":
+        working = df.copy().fillna("")
+        working["external_id"] = working["external_id"].astype(str).str.strip()
+        working["mob_id"] = working["mob_id"].astype(str).str.strip()
+        non_blank = working[(working["external_id"] != "") | (working["mob_id"] != "")]
+
+        if ((non_blank["external_id"] == "") | (non_blank["mob_id"] == "")).any():
+            errors.append("Every substitute mapping row must include both `external_id` and `mob_id`.")
+
+        external_ids = set(load_dataset("raw_external_products")["external_id"].fillna("").astype(str).str.strip())
+        mob_ids = set(load_dataset("mob_portfolio")["MOB_ID"].fillna("").astype(str).str.strip())
+
+        missing_external_ids = sorted({value for value in non_blank["external_id"] if value and value not in external_ids})
+        missing_mob_ids = sorted({value for value in non_blank["mob_id"] if value and value not in mob_ids})
+
+        if missing_external_ids:
+            errors.append("Unknown external IDs in substitute database: " + ", ".join(missing_external_ids[:10]))
+        if missing_mob_ids:
+            errors.append("Unknown MOB IDs in substitute database: " + ", ".join(missing_mob_ids[:10]))
+
+    return errors
 
 
 def parse_requested_amount_updates(raw_text: str) -> tuple[list[dict[str, float | str]], list[str]]:
@@ -476,6 +502,7 @@ with st.expander("Admin Panel", expanded=False):
                 if st.button(f"Save {dataset_name}", key=f"save_{dataset_name}"):
                     normalized_df = normalize_editor_output(dataset_name, edited_df)
                     is_valid, duplicate_rows = validate_unique_keys(dataset_name, normalized_df)
+                    validation_errors = validate_dataset_rules(dataset_name, normalized_df)
                     if not is_valid:
                         unique_keys = DATASETS[dataset_name].get("unique_keys", [])
                         st.error(
@@ -483,8 +510,16 @@ with st.expander("Admin Panel", expanded=False):
                             f"The columns {', '.join(unique_keys)} must be unique."
                         )
                         st.dataframe(duplicate_rows, use_container_width=True, height=220)
+                    elif validation_errors:
+                        for error in validation_errors:
+                            st.error(error)
                     else:
                         save_dataset(dataset_name, normalized_df)
+                        log_audit_action(
+                            "admin_save",
+                            dataset_name,
+                            {"row_count": len(normalized_df)},
+                        )
                         st.success(f"Saved changes to {dataset_name}.")
 
                 st.markdown("**Bulk Upload**")
@@ -509,6 +544,7 @@ with st.expander("Admin Panel", expanded=False):
                             else normalized_upload_df
                         )
                         is_valid, duplicate_rows = validate_unique_keys(dataset_name, combined_df)
+                        validation_errors = validate_dataset_rules(dataset_name, combined_df)
                         if not is_valid:
                             unique_keys = DATASETS[dataset_name].get("unique_keys", [])
                             st.error(
@@ -516,10 +552,26 @@ with st.expander("Admin Panel", expanded=False):
                                 f"The columns {', '.join(unique_keys)} must be unique."
                             )
                             st.dataframe(duplicate_rows, use_container_width=True, height=220)
+                        elif validation_errors:
+                            for error in validation_errors:
+                                st.error(error)
                         else:
                             save_dataset(dataset_name, combined_df)
+                            log_audit_action(
+                                "admin_import",
+                                dataset_name,
+                                {
+                                    "mode": upload_mode.lower(),
+                                    "imported_rows": len(normalized_upload_df),
+                                    "final_row_count": len(combined_df),
+                                },
+                            )
                             st.success(
                                 f"Imported {len(normalized_upload_df)} row(s) into {dataset_name} using {upload_mode.lower()} mode."
                             )
                     except Exception as exc:
                         st.error(f"Could not import into {dataset_name}: {exc}")
+
+        st.markdown("**Recent Admin Activity**")
+        audit_log_df = fetch_audit_log(limit=20)
+        st.dataframe(audit_log_df, use_container_width=True, height=220)
