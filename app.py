@@ -11,6 +11,7 @@ import streamlit as st
 
 from src.config import DATASETS
 from src.data_loader import load_dataset, save_dataset
+from src.database import increment_requested_amounts
 from src.substitution import connected_substitutions_view, lookup_substitutions, match_uploaded_external_products
 from src.visualization import (
     gap_category_options,
@@ -99,6 +100,60 @@ def validate_unique_keys(dataset_name: str, df: pd.DataFrame) -> tuple[bool, pd.
     duplicate_mask = working.duplicated(subset=unique_keys, keep=False)
     duplicate_rows = working[duplicate_mask].copy()
     return duplicate_rows.empty, duplicate_rows
+
+
+def parse_requested_amount_updates(raw_text: str) -> tuple[list[dict[str, float | str]], list[str]]:
+    updates: list[dict[str, float | str]] = []
+    errors: list[str] = []
+
+    for line_number, raw_line in enumerate(raw_text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        parts = [part.strip() for part in re.split(r"[\t,;|]+", line) if part.strip()]
+        if len(parts) != 2:
+            errors.append(f"Line {line_number}: expected `external_id, amount`.")
+            continue
+
+        external_id, amount_text = parts
+        normalized_amount = amount_text.replace(",", ".")
+        try:
+            amount = float(normalized_amount)
+        except ValueError:
+            errors.append(f"Line {line_number}: invalid amount `{amount_text}`.")
+            continue
+
+        if amount <= 0:
+            errors.append(f"Line {line_number}: amount must be greater than 0.")
+            continue
+
+        updates.append({"external_id": external_id, "amount": amount})
+
+    return updates, errors
+
+
+def render_requested_amount_update_result(result: dict[str, object]) -> None:
+    applied_updates = result.get("applied_updates", [])
+    missing_external_ids = result.get("missing_external_ids", [])
+
+    if applied_updates:
+        st.success(f"Applied {len(applied_updates)} requested amount update(s).")
+        summary_rows = []
+        for item in applied_updates:
+            summary_rows.append(
+                {
+                    "external_id": item["external_id"],
+                    "amount_added": item["amount_added"],
+                    "previous_external_qty": item["previous_external_qty"],
+                    "new_external_qty": item["new_external_qty"],
+                    "updated_mob_ids": ", ".join(item["linked_mob_ids"]) if item["linked_mob_ids"] else "No mapped MOB product",
+                }
+            )
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, height=220)
+
+    if missing_external_ids:
+        st.warning("Some external IDs were not found: " + ", ".join(missing_external_ids))
 
 
 st.set_page_config(page_title="Dashboard", page_icon="ST", layout="wide")
@@ -354,6 +409,46 @@ with st.expander("Admin Panel", expanded=False):
                 st.error("Incorrect admin password.")
 
     if st.session_state.admin_unlocked:
+        st.markdown("**Requested Amount Update**")
+        st.caption("Add requested quantity to an external product and automatically add the same quantity to any mapped MOB substitute product.")
+        update_tab_single, update_tab_bulk = st.tabs(["Single Update", "Bulk Update"])
+
+        with update_tab_single:
+            with st.form("single_requested_amount_update"):
+                single_external_id = st.text_input("External ID", key="single_requested_amount_external_id")
+                single_amount = st.number_input("Requested Amount to Add", min_value=0.0, step=1.0, key="single_requested_amount_value")
+                single_submit = st.form_submit_button("Update Requested Amount")
+
+            if single_submit:
+                if not str(single_external_id).strip() or float(single_amount) <= 0:
+                    st.error("Enter a valid external ID and an amount greater than 0.")
+                else:
+                    update_result = increment_requested_amounts(
+                        [{"external_id": str(single_external_id).strip(), "amount": float(single_amount)}]
+                    )
+                    render_requested_amount_update_result(update_result)
+
+        with update_tab_bulk:
+            with st.form("bulk_requested_amount_update"):
+                bulk_update_text = st.text_area(
+                    "Bulk input",
+                    height=160,
+                    placeholder="168404, 120\n744082, 50\n205961, 300",
+                    key="bulk_requested_amount_text",
+                )
+                bulk_submit = st.form_submit_button("Run Bulk Update")
+
+            if bulk_submit:
+                parsed_updates, parse_errors = parse_requested_amount_updates(bulk_update_text)
+                if parse_errors:
+                    for error in parse_errors:
+                        st.error(error)
+                elif not parsed_updates:
+                    st.error("Enter at least one `external_id, amount` row.")
+                else:
+                    update_result = increment_requested_amounts(parsed_updates)
+                    render_requested_amount_update_result(update_result)
+
         dataset_tabs = st.tabs(
             [
                 "External Products",
