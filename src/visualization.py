@@ -86,9 +86,15 @@ def data_quality_metrics() -> dict[str, float]:
 def substitution_metrics() -> dict[str, float]:
     raw_df = load_dataset("raw_external_products")
     direct_sub_df = load_dataset("substitute_database")
+    gap_df = load_dataset("products_without_substitute")
     total = raw_df["external_id"].nunique() if not raw_df.empty else 0
-    linked = direct_sub_df["external_id"].nunique() if not direct_sub_df.empty else 0
-    coverage = round((linked / total) * 100, 1) if total else 0
+    linked_ids = set(direct_sub_df["external_id"].fillna("").astype(str).str.strip()) if not direct_sub_df.empty else set()
+    gap_ids = set(gap_df["external_id"].fillna("").astype(str).str.strip()) if not gap_df.empty else set()
+    linked_ids.discard("")
+    gap_ids.discard("")
+    linked = len(linked_ids)
+    substitution_scope = len(linked_ids | gap_ids)
+    coverage = round((linked / substitution_scope) * 100, 1) if substitution_scope else 0
     return {
         "External products": float(total),
         "Linked substitutes": float(linked),

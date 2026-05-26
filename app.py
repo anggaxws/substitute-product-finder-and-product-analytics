@@ -106,6 +106,61 @@ st.caption("Search an external product on the left and review the portfolio subs
 
 lookup_df = lookup_substitutions("")
 
+
+def render_substitute_result(row: pd.Series, index: int) -> None:
+    st.markdown(f"**Match {index + 1}**")
+    result_top_left, result_top_right = st.columns(2)
+    result_top_left.text_input(
+        "Matched External ID",
+        value=str(row.get("external_id", "")),
+        disabled=True,
+        key=f"matched_external_id_{index}",
+    )
+    result_top_right.text_input(
+        "Matched External Name",
+        value=str(row.get("external_name", "")),
+        disabled=True,
+        key=f"matched_external_name_{index}",
+    )
+
+    result_mid_left, result_mid_right = st.columns(2)
+    result_mid_left.text_input(
+        "External Category",
+        value=str(row.get("category", "")),
+        disabled=True,
+        key=f"matched_external_category_{index}",
+    )
+    result_mid_right.text_input(
+        "Qty Requested",
+        value=str(row.get("qty_requested", "")),
+        disabled=True,
+        key=f"matched_qty_requested_{index}",
+    )
+
+    st.markdown("**Portfolio Substitute**")
+    substitute_left, substitute_right = st.columns(2)
+    substitute_left.text_input("MOB ID", value=str(row.get("mob_id", "")), disabled=True, key=f"matched_mob_id_{index}")
+    substitute_right.text_input(
+        "MOB Name",
+        value=str(row.get("mob_name", "")),
+        disabled=True,
+        key=f"matched_mob_name_{index}",
+    )
+
+    detail_left, detail_right = st.columns(2)
+    detail_left.text_input(
+        "Portfolio Category",
+        value=str(row.get("mob_category", "")),
+        disabled=True,
+        key=f"matched_mob_category_{index}",
+    )
+    detail_right.text_input(
+        "Size / Variant",
+        value=str(row.get("mob_size_variant", "")),
+        disabled=True,
+        key=f"matched_mob_size_variant_{index}",
+    )
+
 with st.container(border=True):
     left_col, right_col = st.columns([1, 1.2], gap="large")
 
@@ -136,24 +191,11 @@ with st.container(border=True):
         elif filtered_lookup.empty:
             st.warning("No matching external product was found.")
         else:
-            selected_row = filtered_lookup.iloc[0]
-
-            result_top_left, result_top_right = st.columns(2)
-            result_top_left.text_input("Matched External ID", value=str(selected_row.get("external_id", "")), disabled=True)
-            result_top_right.text_input("Matched External Name", value=str(selected_row.get("external_name", "")), disabled=True)
-
-            result_mid_left, result_mid_right = st.columns(2)
-            result_mid_left.text_input("External Category", value=str(selected_row.get("category", "")), disabled=True)
-            result_mid_right.text_input("Qty Requested", value=str(selected_row.get("qty_requested", "")), disabled=True)
-
-            st.markdown("**Portfolio Substitute**")
-            substitute_left, substitute_right = st.columns(2)
-            substitute_left.text_input("MOB ID", value=str(selected_row.get("mob_id", "")), disabled=True)
-            substitute_right.text_input("MOB Name", value=str(selected_row.get("mob_name", "")), disabled=True)
-
-            detail_left, detail_right = st.columns(2)
-            detail_left.text_input("Portfolio Category", value=str(selected_row.get("mob_category", "")), disabled=True)
-            detail_right.text_input("Size / Variant", value=str(selected_row.get("mob_size_variant", "")), disabled=True)
+            st.caption("Scroll to review all matching substitute details.")
+            with st.container(height=460, border=True):
+                for index, (_, row) in enumerate(filtered_lookup.iterrows()):
+                    with st.container(border=True):
+                        render_substitute_result(row, index)
 
     if external_id_query or external_name_query:
         st.markdown("**Matching Rows**")
@@ -165,6 +207,7 @@ with st.container(border=True):
             "mob_id",
             "mob_name",
             "mob_category",
+            "mob_size_variant",
         ]
         available_columns = [column for column in result_columns if column in filtered_lookup.columns]
         st.dataframe(filtered_lookup[available_columns], use_container_width=True, height=220)
@@ -248,7 +291,7 @@ if "admin_unlocked" not in st.session_state:
     st.session_state.admin_unlocked = False
 
 with st.expander("Admin Panel", expanded=False):
-    st.caption("Admin can edit the live CSV databases directly. Default password comes from `SUBSTITUTION_TOOL_ADMIN_PASSWORD`, or falls back to `admin`.")
+    st.caption("Enter the admin password.")
 
     if not st.session_state.admin_unlocked:
         admin_password_input = st.text_input("Admin Password", type="password", key="admin_password_input")
