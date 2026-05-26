@@ -35,10 +35,10 @@ streamlit run app.py
 - The app reads and writes through SQLite.
 - CSV and Excel uploads are still supported in the UI for bulk import.
 - The admin panel edits the database-backed datasets directly.
-- The SQLite file is ignored by Git through `.gitignore`.
+- The repository is expected to include `data/substitution_tool.db` as a seed database for deployment.
 
 ## Notes
 
-- The database file must exist in `data/` for the app to use existing data.
-- If you want to share data with teammates, share the SQLite database file or add export/import workflows.
+- The database file must exist in `data/` for the app to show existing data in local runs and deployments.
+- If you want to ship updated insights to deployment, commit the latest `data/substitution_tool.db`.
 - Category-based gap analytics and coverage metrics are derived from the unified external-products table plus substitute mappings.
