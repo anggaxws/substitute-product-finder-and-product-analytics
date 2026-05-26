@@ -13,7 +13,9 @@ from src.config import DATASETS
 from src.data_loader import load_dataset, save_dataset
 from src.substitution import connected_substitutions_view, lookup_substitutions, match_uploaded_external_products
 from src.visualization import (
+    gap_category_options,
     gap_metrics,
+    mob_category_options,
     mob_sales_by_category_chart,
     mob_sales_metrics,
     products_without_substitute_by_category_chart,
@@ -161,6 +163,29 @@ def render_substitute_result(row: pd.Series, index: int) -> None:
         key=f"matched_mob_size_variant_{index}",
     )
 
+
+def render_category_filter(state_key: str, label: str, categories: list[str]) -> str:
+    if state_key not in st.session_state or st.session_state[state_key] not in categories:
+        st.session_state[state_key] = "All"
+
+    current_category = str(st.session_state[state_key])
+    st.caption(f"{label} Current: `{current_category}`")
+    with st.popover("Category Filter", use_container_width=False):
+        selected_category = st.selectbox(
+            "Choose category",
+            categories,
+            index=categories.index(current_category),
+            key=f"{state_key}_select",
+        )
+        if selected_category != current_category:
+            st.session_state[state_key] = selected_category
+            current_category = selected_category
+        if st.button("Reset to All", key=f"{state_key}_reset", use_container_width=True):
+            st.session_state[state_key] = "All"
+            current_category = "All"
+
+    return str(st.session_state[state_key])
+
 with st.container(border=True):
     left_col, right_col = st.columns([1, 1.2], gap="large")
 
@@ -247,11 +272,26 @@ for column, (label, value) in zip(metric_columns, overview_metrics.items()):
     column.metric(label, value)
 
 connected_subs_df = connected_substitutions_view()
+mob_categories = mob_category_options()
+gap_categories = gap_category_options()
+if "selected_mob_category" not in st.session_state or st.session_state["selected_mob_category"] not in mob_categories:
+    st.session_state["selected_mob_category"] = "All"
+if "selected_gap_category" not in st.session_state or st.session_state["selected_gap_category"] not in gap_categories:
+    st.session_state["selected_gap_category"] = "All"
+selected_mob_category = str(st.session_state["selected_mob_category"])
+selected_gap_category = str(st.session_state["selected_gap_category"])
 
 chart_col1, chart_col2 = st.columns(2)
-sales_by_category_fig = mob_sales_by_category_chart()
+sales_by_category_fig = mob_sales_by_category_chart(selected_mob_category)
 if sales_by_category_fig is not None:
     chart_col1.plotly_chart(sales_by_category_fig, use_container_width=True)
+chart_col1.write("")
+with chart_col1:
+    selected_mob_category = render_category_filter(
+        "selected_mob_category",
+        "MOB category filter.",
+        mob_categories,
+    )
 
 mob_view_mode = chart_col2.radio(
     "MOB Product View",
@@ -259,20 +299,31 @@ mob_view_mode = chart_col2.radio(
     horizontal=True,
 )
 if mob_view_mode == "Product Families":
-    top_mob_fig = top_mob_families_chart()
+    top_mob_fig = top_mob_families_chart(category=selected_mob_category)
 else:
-    top_mob_fig = top_mob_products_chart()
+    top_mob_fig = top_mob_products_chart(category=selected_mob_category)
 if top_mob_fig is not None:
     chart_col2.plotly_chart(top_mob_fig, use_container_width=True)
+else:
+    chart_col2.info("No MOB products found for the selected category.")
 
 chart_col3, chart_col4 = st.columns(2)
-gap_by_category_fig = products_without_substitute_by_category_chart()
+gap_by_category_fig = products_without_substitute_by_category_chart(selected_gap_category)
 if gap_by_category_fig is not None:
     chart_col3.plotly_chart(gap_by_category_fig, use_container_width=True)
+chart_col3.write("")
+with chart_col3:
+    selected_gap_category = render_category_filter(
+        "selected_gap_category",
+        "Gap category filter.",
+        gap_categories,
+    )
 
-top_gap_families_fig = top_products_without_substitute_families_chart()
+top_gap_families_fig = top_products_without_substitute_families_chart(category=selected_gap_category)
 if top_gap_families_fig is not None:
     chart_col4.plotly_chart(top_gap_families_fig, use_container_width=True)
+else:
+    chart_col4.info("No products without substitute found for the selected category.")
 
 st.subheader("Connected Substitutions")
 connected_columns = [

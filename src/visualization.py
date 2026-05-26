@@ -20,6 +20,12 @@ def _products_without_substitute_with_qty() -> pd.DataFrame:
     return gap_df
 
 
+def _filter_category(df: pd.DataFrame, column: str, category: str | None) -> pd.DataFrame:
+    if df.empty or not category or category == "All":
+        return df
+    return df[df[column].fillna("Unknown") == category]
+
+
 def _detect_product_families(
     df: pd.DataFrame,
     *,
@@ -133,16 +139,26 @@ def gap_metrics() -> dict[str, float]:
     }
 
 
-def mob_sales_by_category_chart():
+def mob_sales_by_category_chart(selected_category: str | None = None):
     mob_df = _mob_portfolio_with_sales()
     if mob_df.empty:
         return None
     summary = mob_df.groupby("Kategorie", dropna=False)["Req_Qty_Total"].sum().reset_index().sort_values("Req_Qty_Total", ascending=False)
     summary["Kategorie"] = summary["Kategorie"].fillna("Unknown")
-    return px.bar(summary, x="Kategorie", y="Req_Qty_Total", title="MOB Sales by Category")
+    summary["selected"] = summary["Kategorie"].eq(selected_category)
+    fig = px.bar(
+        summary,
+        x="Kategorie",
+        y="Req_Qty_Total",
+        color="selected",
+        color_discrete_map={True: "#0f766e", False: "#cbd5e1"},
+        title="MOB Sales by Category",
+    )
+    fig.update_layout(showlegend=False)
+    return fig
 
 
-def top_mob_families_chart(limit: int = 12):
+def top_mob_families_chart(limit: int = 12, category: str | None = None):
     mob_df = _detect_product_families(
         _mob_portfolio_with_sales(),
         name_column="MOB_Name",
@@ -151,12 +167,21 @@ def top_mob_families_chart(limit: int = 12):
     )
     if mob_df.empty:
         return None
+    mob_df["Kategorie"] = mob_df["Kategorie"].fillna("Unknown")
+    mob_df = _filter_category(mob_df, "Kategorie", category)
+    if mob_df.empty:
+        return None
     summary = mob_df.groupby("product_family", dropna=False)["Req_Qty_Total"].sum().reset_index().sort_values("Req_Qty_Total", ascending=False).head(limit)
-    return px.bar(summary.sort_values("Req_Qty_Total", ascending=True), x="Req_Qty_Total", y="product_family", orientation="h", title=f"Top {limit} MOB Product Families")
+    title_suffix = f" in {category}" if category and category != "All" else ""
+    return px.bar(summary.sort_values("Req_Qty_Total", ascending=True), x="Req_Qty_Total", y="product_family", orientation="h", title=f"Top {limit} MOB Product Families{title_suffix}")
 
 
-def top_mob_products_chart(limit: int = 12):
+def top_mob_products_chart(limit: int = 12, category: str | None = None):
     mob_df = _mob_portfolio_with_sales()
+    if mob_df.empty:
+        return None
+    mob_df["Kategorie"] = mob_df["Kategorie"].fillna("Unknown")
+    mob_df = _filter_category(mob_df, "Kategorie", category)
     if mob_df.empty:
         return None
     summary = mob_df.copy()
@@ -204,7 +229,7 @@ def top_mob_products_chart(limit: int = 12):
             "product_label": False,
             "full_product_label": False,
         },
-        title=f"Top {limit} MOB Products",
+        title=f"Top {limit} MOB Products{f' in {category}' if category and category != 'All' else ''}",
     )
     fig.update_layout(
         yaxis={"automargin": True},
@@ -213,16 +238,26 @@ def top_mob_products_chart(limit: int = 12):
     return fig
 
 
-def products_without_substitute_by_category_chart():
+def products_without_substitute_by_category_chart(selected_category: str | None = None):
     gap_df = _products_without_substitute_with_qty()
     if gap_df.empty:
         return None
     summary = gap_df.groupby("category", dropna=False)["qty_requested"].sum().reset_index().sort_values("qty_requested", ascending=False)
     summary["category"] = summary["category"].fillna("Unknown")
-    return px.bar(summary, x="category", y="qty_requested", title="Products Without Substitute by Category")
+    summary["selected"] = summary["category"].eq(selected_category)
+    fig = px.bar(
+        summary,
+        x="category",
+        y="qty_requested",
+        color="selected",
+        color_discrete_map={True: "#b45309", False: "#fde68a"},
+        title="Products Without Substitute by Category",
+    )
+    fig.update_layout(showlegend=False)
+    return fig
 
 
-def top_products_without_substitute_families_chart(limit: int = 12):
+def top_products_without_substitute_families_chart(limit: int = 12, category: str | None = None):
     gap_df = _detect_product_families(
         _products_without_substitute_with_qty(),
         name_column="external_name",
@@ -231,5 +266,22 @@ def top_products_without_substitute_families_chart(limit: int = 12):
     )
     if gap_df.empty:
         return None
+    gap_df["category"] = gap_df["category"].fillna("Unknown")
+    gap_df = _filter_category(gap_df, "category", category)
+    if gap_df.empty:
+        return None
     summary = gap_df.groupby("product_family", dropna=False)["qty_requested"].sum().reset_index().sort_values("qty_requested", ascending=False).head(limit)
-    return px.bar(summary.sort_values("qty_requested", ascending=True), x="qty_requested", y="product_family", orientation="h", title=f"Top {limit} Product Families Without Substitute")
+    title_suffix = f" in {category}" if category and category != "All" else ""
+    return px.bar(summary.sort_values("qty_requested", ascending=True), x="qty_requested", y="product_family", orientation="h", title=f"Top {limit} Products Without Substitute{title_suffix}")
+
+
+def mob_category_options() -> list[str]:
+    mob_df = _mob_portfolio_with_sales()
+    categories = sorted({str(value).strip() or "Unknown" for value in mob_df.get("Kategorie", pd.Series(dtype=str)).fillna("Unknown")})
+    return ["All", *categories]
+
+
+def gap_category_options() -> list[str]:
+    gap_df = _products_without_substitute_with_qty()
+    categories = sorted({str(value).strip() or "Unknown" for value in gap_df.get("category", pd.Series(dtype=str)).fillna("Unknown")})
+    return ["All", *categories]
