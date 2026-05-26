@@ -1,0 +1,4 @@
+data/substitution_tool.db
+__pycache__/
+*.pyc
+.streamlit/

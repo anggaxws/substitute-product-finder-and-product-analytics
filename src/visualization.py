@@ -14,8 +14,24 @@ def _mob_portfolio_with_sales() -> pd.DataFrame:
     return mob_df
 
 
+def _external_products_with_status() -> pd.DataFrame:
+    external_df = load_dataset("raw_external_products").copy()
+    substitute_df = load_dataset("substitute_database").copy()
+    if external_df.empty:
+        external_df["has_substitute"] = pd.Series(dtype=bool)
+        return external_df
+
+    linked_ids = set(substitute_df.get("external_id", pd.Series(dtype=str)).fillna("").astype(str).str.strip())
+    linked_ids.discard("")
+    external_df["external_id"] = external_df["external_id"].fillna("").astype(str).str.strip()
+    external_df["has_substitute"] = external_df["external_id"].isin(linked_ids)
+    return external_df
+
+
 def _products_without_substitute_with_qty() -> pd.DataFrame:
-    gap_df = load_dataset("products_without_substitute").copy()
+    gap_df = _external_products_with_status().copy()
+    if "has_substitute" in gap_df.columns:
+        gap_df = gap_df[~gap_df["has_substitute"]].copy()
     gap_df["qty_requested"] = pd.to_numeric(gap_df.get("qty_requested", 0), errors="coerce").fillna(0)
     return gap_df
 
@@ -90,17 +106,10 @@ def data_quality_metrics() -> dict[str, float]:
 
 
 def substitution_metrics() -> dict[str, float]:
-    raw_df = load_dataset("raw_external_products")
-    direct_sub_df = load_dataset("substitute_database")
-    gap_df = load_dataset("products_without_substitute")
-    total = raw_df["external_id"].nunique() if not raw_df.empty else 0
-    linked_ids = set(direct_sub_df["external_id"].fillna("").astype(str).str.strip()) if not direct_sub_df.empty else set()
-    gap_ids = set(gap_df["external_id"].fillna("").astype(str).str.strip()) if not gap_df.empty else set()
-    linked_ids.discard("")
-    gap_ids.discard("")
-    linked = len(linked_ids)
-    substitution_scope = len(linked_ids | gap_ids)
-    coverage = round((linked / substitution_scope) * 100, 1) if substitution_scope else 0
+    external_df = _external_products_with_status()
+    total = external_df["external_id"].nunique() if not external_df.empty else 0
+    linked = int(external_df["has_substitute"].sum()) if "has_substitute" in external_df.columns else 0
+    coverage = round((linked / total) * 100, 1) if total else 0
     return {
         "External products": float(total),
         "Linked substitutes": float(linked),

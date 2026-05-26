@@ -356,16 +356,14 @@ with st.expander("Admin Panel", expanded=False):
     if st.session_state.admin_unlocked:
         dataset_tabs = st.tabs(
             [
-                "Raw External Products",
+                "External Products",
                 "MOB Portfolio",
-                "Products Without Substitute",
                 "Substitute Database",
             ]
         )
         dataset_names = [
             "raw_external_products",
             "mob_portfolio",
-            "products_without_substitute",
             "substitute_database",
         ]
 
